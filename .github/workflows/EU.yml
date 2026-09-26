@@ -38,10 +38,14 @@ jobs:
           remove-docker-images: 'true'
           remove-large-packages: 'true'
           remove-cached-tools: 'true'
-      - name: Setup SSH Key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.PRIVATE_REPO_KEY }}
+      - name: Start SSH Agent & Add Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PRIVATE_REPO_KEY }}" | base64 -d > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
       - name: Setup build environment
         run: |
           sudo timedatectl set-timezone UTC
