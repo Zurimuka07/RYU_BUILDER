@@ -1,3 +1,3 @@
 
   ---
-  **ProjectZK** is developed and maintained by KhoaPug @zuri1503
+  **ProjectRYU** is developed and maintained by KhoaPug @ryu1503
