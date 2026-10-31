@@ -1,0 +1,84 @@
+name: RYU BUILDER PORT
+on:
+  workflow_dispatch:
+    inputs:
+      URL:
+        description: "EROFS IMAGES ZIP URL"
+        required: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ROM_URL: ${{ github.event.inputs.URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check free disk space
+        id: diskcheck
+        run: |
+          FREE_GB=$(df -BG / | awk 'NR==2 {gsub("G","",$4); print $4}')
+          echo "Free disk space: ${FREE_GB}GB"
+          echo "need_cleanup=$( [ "$FREE_GB" -lt 50 ] && echo true || echo false )" >> $GITHUB_OUTPUT
+      - name: Maximize build disk space
+        if: steps.diskcheck.outputs.need_cleanup == 'true'
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          remove-large-packages: 'true'
+          remove-cached-tools: 'true'
+      - name: Start SSH Agent & Add Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PRIVATE_REPO_KEY }}" | base64 -d > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Setup build environment
+        run: |
+          sudo timedatectl set-timezone UTC
+          sudo apt-get update -qq
+          sudo apt-get install -y aria2 \
+            openjdk-17-jdk-headless \
+            openssh-client p7zip-full \
+            python3 python-is-python3 python3-pip \
+            zip zipalign > /dev/null 2>&1
+          sudo pip install --quiet lz4 zstandard \
+            google-api-python-client \
+            google-auth-httplib2 gdown \
+            google-auth-oauthlib > /dev/null 2>&1
+          DATE=$(TZ=UTC date +"%y%m%d")
+          RYU_NAME="RYUOS_PORT_$DATE"
+          echo "RYU_NAME=$RYU_NAME" >> $GITHUB_ENV
+      - name: Download ROM files
+        run: |
+          DEST_DIR="$GITHUB_WORKSPACE/ROM"
+          OUT_FILE="$DEST_DIR/${RYU_NAME}.zip"
+          echo "::group::Downloading ROM"
+          mkdir -p "$DEST_DIR"
+          timeout 9000 gdown "$ROM_URL" -O "$OUT_FILE" \
+            || { echo "::error::ROM download failed"; exit 1; }
+          echo "::endgroup::"
+          [ -s "$OUT_FILE" ] && [ $(stat -c%s "$OUT_FILE") -gt 1048576 ] \
+            || { echo "::error::Downloaded ROM is missing, empty, or invalid"; exit 1; }
+          echo "Download complete: $(du -h "$OUT_FILE" | cut -f1)"
+      - name: Clone RYU AUTO BUILD sources
+        run: |
+          RYU_HOME="/home/runner/work/RYU_BUILD/RYU_BUILD"
+          echo "RYU_HOME=$RYU_HOME" >> $GITHUB_ENV
+          git clone -b stock --depth=1 git@github.com:zuri1503/RYU_BUILD.git "$RYU_HOME"
+          mv -f "$GITHUB_WORKSPACE/ROM" "$RYU_HOME/ROM"
+          sudo chmod -R +x "$RYU_HOME"
+      - name: Build ProjectRYU ROM
+        run: |
+          sudo bash "$RYU_HOME/build.sh" "$GITHUB_ENV" "$RYU_NAME"
+      - name: Upload ROM to Clouds
+        run: |
+          echo "${{ secrets.TOKEN_PICKLE2 }}" | base64 -d > token.pickle
+          echo "${{ secrets.UPLOADER }}" | base64 -d > upload.py
+          chmod 0600 token.pickle upload.py
+          python upload.py --folder-id "1HV_fVyyi7pWsgGBX4B83bTmaCT9X6oex" "$ROM_OUTPUT"
